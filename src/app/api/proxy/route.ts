@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const runtime = 'nodejs';
+
 export async function POST(req: NextRequest) {
   try {
     const { url, method = 'GET', headers = {}, body } = await req.json();
@@ -8,7 +10,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing target URL' }, { status: 400 });
     }
 
-    const cleanHeaders: Record<string, string> = {};
+    const cleanHeaders: Record<string, string> = {
+      'User-Agent': 'Kinetic-API-Client/1.0.4 (Edge-Runtime)',
+      Accept: 'application/json, text/plain, */*',
+    };
+
     if (headers && typeof headers === 'object') {
       Object.entries(headers).forEach(([k, v]) => {
         if (k && v && typeof v === 'string') {

@@ -322,33 +322,59 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     try {
       let responseData: NodeResponse;
 
-      // Call our Next.js real proxy endpoint to bypass CORS and get real live telemetry
-      const res = await fetch('/api/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: finalUrl,
+      try {
+        // First try the server proxy to avoid CORS
+        const res = await fetch('/api/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: finalUrl,
+            method: node.method,
+            headers: finalHeaders,
+            body: finalBody,
+          }),
+        });
+
+        if (!res.ok && res.status !== 502) {
+          throw new Error(`Proxy error: ${res.statusText}`);
+        }
+
+        const proxyResult = await res.json();
+        responseData = {
+          status: proxyResult.status,
+          statusText: proxyResult.statusText,
+          latencyMs: proxyResult.latencyMs || Math.round(performance.now() - startTime),
+          sizeBytes: proxyResult.sizeBytes || 0,
+          body: proxyResult.body || JSON.stringify(proxyResult),
+          parsedBody: proxyResult.parsedBody,
+          headers: proxyResult.headers || {},
+          timestamp: proxyResult.timestamp || Date.now(),
+        };
+      } catch (proxyErr) {
+        // Resilient fallback: direct browser fetch
+        const directRes = await fetch(finalUrl, {
           method: node.method,
           headers: finalHeaders,
           body: finalBody,
-        }),
-      });
+        });
+        const directText = await directRes.text();
+        let directJson = null;
+        try { directJson = JSON.parse(directText); } catch {}
 
-      if (!res.ok && res.status !== 502) {
-        throw new Error(`Proxy error: ${res.statusText}`);
+        const directHeaders: Record<string, string> = {};
+        directRes.headers.forEach((v, k) => { directHeaders[k] = v; });
+
+        responseData = {
+          status: directRes.status,
+          statusText: directRes.statusText || 'OK',
+          latencyMs: Math.round(performance.now() - startTime),
+          sizeBytes: new Blob([directText]).size,
+          body: directText,
+          parsedBody: directJson,
+          headers: directHeaders,
+          timestamp: Date.now(),
+        };
       }
-
-      const proxyResult = await res.json();
-      responseData = {
-        status: proxyResult.status,
-        statusText: proxyResult.statusText,
-        latencyMs: proxyResult.latencyMs || Math.round(performance.now() - startTime),
-        sizeBytes: proxyResult.sizeBytes || 0,
-        body: proxyResult.body || JSON.stringify(proxyResult),
-        parsedBody: proxyResult.parsedBody,
-        headers: proxyResult.headers || {},
-        timestamp: proxyResult.timestamp || Date.now(),
-      };
 
       // Check Real Assertions
       const updatedAssertions = node.assertions.map((a) => {
