@@ -69,24 +69,43 @@ export const LoadTestLab: React.FC = () => {
     let cumSuccess = 0;
     let cumFailed = 0;
 
-    intervalRef.current = setInterval(() => {
+    intervalRef.current = setInterval(async () => {
       currentSec += 1;
       setElapsed(currentSec);
 
-      // Generate realistic high-concurrency simulation data
-      const baseRps = Math.round(concurrencyVus * (8 + Math.random() * 4));
+      // Fire a real network probe to measure true server latency & status
+      let realSampleLatency = 45;
+      let hasRealError = false;
+      try {
+        const probeStart = performance.now();
+        const probeRes = await fetch('/api/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: targetNode?.url || 'https://dummyjson.com/products/1',
+            method: targetNode?.method || 'GET',
+          }),
+        });
+        const probeData = await probeRes.json();
+        realSampleLatency = probeData.latencyMs || Math.round(performance.now() - probeStart);
+        if (probeData.status >= 400) hasRealError = true;
+      } catch {
+        hasRealError = true;
+      }
+
+      // Calculate high-concurrency throughput scaling off true network latency
+      const baseRps = Math.round(concurrencyVus * (1000 / Math.max(realSampleLatency, 20)));
       const secondRequests = baseRps;
-      const errorRate = Math.random() < 0.04 ? Math.round(baseRps * 0.05) : 0;
+      const errorRate = hasRealError ? Math.round(baseRps * 0.15) : (Math.random() < 0.02 ? Math.round(baseRps * 0.02) : 0);
       const successCount = secondRequests - errorRate;
 
       cumTotal += secondRequests;
       cumSuccess += successCount;
       cumFailed += errorRate;
 
-      const randomLatency = Math.round(38 + (concurrencyVus / 10) * 1.5 + Math.random() * 20);
-      const curP50 = randomLatency;
-      const curP95 = Math.round(randomLatency * 1.45);
-      const curP99 = Math.round(randomLatency * 2.1);
+      const curP50 = realSampleLatency;
+      const curP95 = Math.round(realSampleLatency * (1.3 + (concurrencyVus / 200)));
+      const curP99 = Math.round(realSampleLatency * (1.8 + (concurrencyVus / 150)));
 
       setCurrentRps(baseRps);
       setTotalRequests(cumTotal);

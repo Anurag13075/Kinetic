@@ -27,63 +27,77 @@ interface WorkflowState {
   updateEnvironmentVar: (envName: string, key: string, value: string) => void;
   setEnvironment: (env: string) => void;
 
-  // Pipeline Execution Engine
+  // Real Network Execution Engine
   runSingleNode: (nodeId: string) => Promise<NodeResponse>;
   runEntirePipeline: () => Promise<void>;
   resetPipelineStatus: () => void;
   importCurl: (curlString: string) => void;
 }
 
+// Deep object resolver for paths like "body.token" or "headers.content-type"
+function resolvePath(obj: any, path: string): any {
+  if (!obj || !path) return undefined;
+  const cleanPath = path.startsWith('body.') ? path.slice(5) : path;
+  const parts = cleanPath.split('.');
+  let current = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
 const INITIAL_NODES: WorkflowNode[] = [
   {
     id: 'node-auth',
-    name: '1. Auth & Token Generation',
+    name: '1. User Auth (Real JWT)',
     type: 'http',
-    position: { x: 80, y: 140 },
+    position: { x: 60, y: 140 },
     method: 'POST',
-    url: 'https://httpbin.org/post',
+    url: 'https://dummyjson.com/auth/login',
     headers: [
       { key: 'Content-Type', value: 'application/json', enabled: true },
-      { key: 'X-Client-Id', value: 'kinetic-agent-v1', enabled: true },
     ],
     queryParams: [],
     body: JSON.stringify(
       {
-        email: 'alex.dev@kinetic.io',
-        password: '••••••••••••',
-        grant_type: 'client_credentials',
+        username: 'emilys',
+        password: 'emilyspass',
+        expiresInMins: 30,
       },
       null,
       2
     ),
     authType: 'none',
     extractors: [
-      { id: 'ext-1', variableName: 'auth_token', path: 'headers.X-Amzn-Trace-Id' },
-      { id: 'ext-2', variableName: 'session_id', path: 'origin' },
+      { id: 'ext-1', variableName: 'auth_token', path: 'body.token' },
+      { id: 'ext-2', variableName: 'user_id', path: 'body.id' },
+      { id: 'ext-3', variableName: 'user_email', path: 'body.email' },
     ],
     assertions: [
       { id: 'ass-1', target: 'status', operator: 'equals', expected: '200' },
-      { id: 'ass-2', target: 'latency', operator: 'less_than', expected: '800' },
+      { id: 'ass-2', target: 'body_contains', operator: 'contains', expected: 'token' },
     ],
     status: 'idle',
   },
   {
     id: 'node-profile',
-    name: '2. Fetch User Profile',
+    name: '2. Authenticated Profile',
     type: 'http',
-    position: { x: 480, y: 140 },
+    position: { x: 440, y: 140 },
     method: 'GET',
-    url: 'https://httpbin.org/get?user={{session_id}}',
+    url: 'https://dummyjson.com/auth/me',
     headers: [
       { key: 'Authorization', value: 'Bearer {{auth_token}}', enabled: true },
       { key: 'Accept', value: 'application/json', enabled: true },
     ],
-    queryParams: [{ key: 'tier', value: 'enterprise_pro', enabled: true }],
+    queryParams: [],
     body: '',
     authType: 'bearer',
     authToken: '{{auth_token}}',
     extractors: [
-      { id: 'ext-3', variableName: 'user_agent', path: 'headers.User-Agent' },
+      { id: 'ext-4', variableName: 'first_name', path: 'body.firstName' },
+      { id: 'ext-5', variableName: 'user_role', path: 'body.role' },
     ],
     assertions: [
       { id: 'ass-3', target: 'status', operator: 'equals', expected: '200' },
@@ -91,32 +105,23 @@ const INITIAL_NODES: WorkflowNode[] = [
     status: 'idle',
   },
   {
-    id: 'node-checkout',
-    name: '3. Execute Order Checkout',
+    id: 'node-cart',
+    name: '3. Fetch User Cart',
     type: 'http',
-    position: { x: 880, y: 140 },
-    method: 'POST',
-    url: 'https://httpbin.org/status/201',
+    position: { x: 820, y: 140 },
+    method: 'GET',
+    url: 'https://dummyjson.com/carts/user/1',
     headers: [
-      { key: 'Content-Type', value: 'application/json', enabled: true },
-      { key: 'Idempotency-Key', value: 'req_k8s_9921b', enabled: true },
+      { key: 'Authorization', value: 'Bearer {{auth_token}}', enabled: true },
     ],
     queryParams: [],
-    body: JSON.stringify(
-      {
-        sku: 'CORP-SUB-01',
-        currency: 'USD',
-        amount: 24900,
-        assigned_user: '{{session_id}}',
-      },
-      null,
-      2
-    ),
+    body: '',
     authType: 'none',
-    extractors: [],
+    extractors: [
+      { id: 'ext-6', variableName: 'cart_total', path: 'body.carts.0.total' },
+    ],
     assertions: [
-      { id: 'ass-4', target: 'status', operator: 'equals', expected: '201' },
-      { id: 'ass-5', target: 'latency', operator: 'less_than', expected: '600' },
+      { id: 'ass-4', target: 'status', operator: 'equals', expected: '200' },
     ],
     status: 'idle',
   },
@@ -124,7 +129,7 @@ const INITIAL_NODES: WorkflowNode[] = [
 
 const INITIAL_EDGES: EdgeConnection[] = [
   { id: 'edge-1', fromNodeId: 'node-auth', toNodeId: 'node-profile' },
-  { id: 'edge-2', fromNodeId: 'node-profile', toNodeId: 'node-checkout' },
+  { id: 'edge-2', fromNodeId: 'node-profile', toNodeId: 'node-cart' },
 ];
 
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
@@ -133,18 +138,19 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   selectedNodeId: 'node-auth',
   activeTab: 'canvas',
   runtimeVariables: {
-    auth_token: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-    session_id: 'usr_99182a4c',
+    auth_token: '',
+    user_id: '1',
+    user_email: 'emily.johnson@x.dummyjson.com',
   },
-  environment: 'Staging Cloud',
+  environment: 'Production Gateway',
   environments: {
-    'Staging Cloud': [
-      { key: 'BASE_URL', value: 'https://api-staging.kinetic.io', enabled: true },
+    'Production Gateway': [
+      { key: 'BASE_URL', value: 'https://dummyjson.com', enabled: true },
       { key: 'TIMEOUT_MS', value: '5000', enabled: true },
     ],
-    Production: [
-      { key: 'BASE_URL', value: 'https://api.kinetic.io', enabled: true },
-      { key: 'TIMEOUT_MS', value: '3000', enabled: true },
+    'Staging Cloud': [
+      { key: 'BASE_URL', value: 'https://httpbin.org', enabled: true },
+      { key: 'TIMEOUT_MS', value: '8000', enabled: true },
     ],
   },
   isExecuting: false,
@@ -175,17 +181,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const newId = `node-${Date.now().toString(36)}`;
     const count = get().nodes.length + 1;
     const defaultPos = position || {
-      x: 100 + (count % 3) * 320,
+      x: 100 + (count % 3) * 340,
       y: 120 + Math.floor(count / 3) * 160,
     };
 
     const newNode: WorkflowNode = {
       id: newId,
-      name: `${count}. New HTTP Request`,
+      name: `${count}. Request Endpoint`,
       type,
       position: defaultPos,
       method: 'GET',
-      url: 'https://httpbin.org/get',
+      url: 'https://dummyjson.com/products/1',
       headers: [{ key: 'Accept', value: 'application/json', enabled: true }],
       queryParams: [],
       body: '',
@@ -280,7 +286,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }));
   },
 
-  // Execution engine with variable substitution & assertions
+  // Real Network Execution Engine (Zero Fake Data)
   runSingleNode: async (nodeId) => {
     const node = get().nodes.find((n) => n.id === nodeId);
     if (!node) throw new Error('Node not found');
@@ -291,95 +297,93 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }));
 
     const variables = get().runtimeVariables;
-    // Substitute {{variable}} in URL & Body
     const interpolate = (str: string) => {
+      if (!str) return '';
       return str.replace(/\{\{([\w_]+)\}\}/g, (_, key) => {
         return variables[key] !== undefined ? String(variables[key]) : `{{${key}}}`;
       });
     };
 
     const finalUrl = interpolate(node.url);
+    const finalHeaders: Record<string, string> = {};
+    node.headers.forEach((h) => {
+      if (h.enabled && h.key) {
+        finalHeaders[h.key] = interpolate(h.value);
+      }
+    });
+
+    if (node.authType === 'bearer' && node.authToken) {
+      finalHeaders['Authorization'] = `Bearer ${interpolate(node.authToken)}`;
+    }
+
+    const finalBody = node.body ? interpolate(node.body) : undefined;
     const startTime = performance.now();
 
     try {
-      // Simulate realistic execution over network or mock sandbox
-      await new Promise((res) => setTimeout(res, 280 + Math.random() * 240));
-      const endTime = performance.now();
-      const latencyMs = Math.round(endTime - startTime);
+      let responseData: NodeResponse;
 
-      let mockStatus = 200;
-      if (finalUrl.includes('status/201')) mockStatus = 201;
-      else if (finalUrl.includes('status/404')) mockStatus = 404;
-      else if (finalUrl.includes('status/500')) mockStatus = 500;
+      // Call our Next.js real proxy endpoint to bypass CORS and get real live telemetry
+      const res = await fetch('/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: finalUrl,
+          method: node.method,
+          headers: finalHeaders,
+          body: finalBody,
+        }),
+      });
 
-      const mockBodyObj = {
-        success: mockStatus >= 200 && mockStatus < 300,
-        timestamp: new Date().toISOString(),
-        nodeId: node.id,
-        method: node.method,
-        origin: '198.51.100.42',
-        headers: {
-          'X-Amzn-Trace-Id': `Root=1-${Date.now().toString(16)}-f48a9b2c`,
-          'User-Agent': 'Kinetic-Engine/1.0.4 (Unix; x86_64)',
-        },
-        data: {
-          requestId: `req_${Math.random().toString(36).substring(2, 9)}`,
-          orderId: `ord_${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-          status: 'PROCESSED',
-          latency: `${latencyMs}ms`,
-        },
+      if (!res.ok && res.status !== 502) {
+        throw new Error(`Proxy error: ${res.statusText}`);
+      }
+
+      const proxyResult = await res.json();
+      responseData = {
+        status: proxyResult.status,
+        statusText: proxyResult.statusText,
+        latencyMs: proxyResult.latencyMs || Math.round(performance.now() - startTime),
+        sizeBytes: proxyResult.sizeBytes || 0,
+        body: proxyResult.body || JSON.stringify(proxyResult),
+        parsedBody: proxyResult.parsedBody,
+        headers: proxyResult.headers || {},
+        timestamp: proxyResult.timestamp || Date.now(),
       };
 
-      const responseBodyStr = JSON.stringify(mockBodyObj, null, 2);
-
-      // Check Assertions
+      // Check Real Assertions
       const updatedAssertions = node.assertions.map((a) => {
         if (a.target === 'status') {
-          return { ...a, passed: String(mockStatus) === a.expected };
+          return { ...a, passed: String(responseData.status) === a.expected };
         }
         if (a.target === 'latency') {
-          return { ...a, passed: latencyMs <= Number(a.expected) };
+          return { ...a, passed: responseData.latencyMs <= Number(a.expected) };
         }
         if (a.target === 'body_contains') {
-          return { ...a, passed: responseBodyStr.includes(a.expected) };
+          return { ...a, passed: responseData.body.includes(a.expected) };
         }
         return { ...a, passed: true };
       });
 
       const allAssertionsPassed = updatedAssertions.every((a) => a.passed !== false);
 
-      // Extract variables into global runtime store
+      // Extract real variables dynamically from live JSON body
       const newExtractedVars: Record<string, any> = {};
-      node.extractors.forEach((ext) => {
-        if (ext.path === 'origin') newExtractedVars[ext.variableName] = mockBodyObj.origin;
-        if (ext.path.includes('Trace-Id'))
-          newExtractedVars[ext.variableName] = mockBodyObj.headers['X-Amzn-Trace-Id'];
-        if (ext.path.includes('User-Agent'))
-          newExtractedVars[ext.variableName] = mockBodyObj.headers['User-Agent'];
-      });
-
-      const response: NodeResponse = {
-        status: mockStatus,
-        statusText: mockStatus === 200 ? 'OK' : mockStatus === 201 ? 'Created' : 'Error',
-        latencyMs,
-        sizeBytes: new Blob([responseBodyStr]).size,
-        body: responseBodyStr,
-        parsedBody: mockBodyObj,
-        headers: {
-          'content-type': 'application/json',
-          'x-powered-by': 'Kinetic-Edge-Runtime',
-          'cache-control': 'no-store, max-age=0',
-        },
-        timestamp: Date.now(),
-      };
+      if (responseData.parsedBody) {
+        node.extractors.forEach((ext) => {
+          const val = resolvePath(responseData.parsedBody, ext.path);
+          if (val !== undefined) {
+            newExtractedVars[ext.variableName] = val;
+          }
+        });
+      }
 
       set((state) => ({
         nodes: state.nodes.map((n) =>
           n.id === nodeId
             ? {
                 ...n,
-                status: allAssertionsPassed ? 'success' : 'error',
-                lastResponse: response,
+                status: allAssertionsPassed && responseData.status < 400 ? 'success' : 'error',
+                lastResponse: responseData,
                 assertions: updatedAssertions,
               }
             : n
@@ -388,19 +392,29 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         activeExecutionNodeId: null,
       }));
 
-      return response;
+      return responseData;
     } catch (err: any) {
+      const errResponse: NodeResponse = {
+        status: 500,
+        statusText: 'Network Failure',
+        latencyMs: Math.round(performance.now() - startTime),
+        sizeBytes: 0,
+        body: JSON.stringify({ error: err.message || 'Failed to fetch external API' }, null, 2),
+        headers: {},
+        timestamp: Date.now(),
+      };
+
       set((state) => ({
         nodes: state.nodes.map((n) =>
-          n.id === nodeId ? { ...n, status: 'error' } : n
+          n.id === nodeId ? { ...n, status: 'error', lastResponse: errResponse } : n
         ),
         activeExecutionNodeId: null,
       }));
+
       throw err;
     }
   },
 
-  // Sequential execution traversing edges in topological order
   runEntirePipeline: async () => {
     set({ isExecuting: true });
     get().resetPipelineStatus();
@@ -409,10 +423,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     for (const node of nodes) {
       try {
         await get().runSingleNode(node.id);
-        // Small breathing delay between visual nodes
         await new Promise((res) => setTimeout(res, 200));
       } catch (err) {
-        break; // halt on pipeline error
+        break; // stop sequence on network break
       }
     }
 
@@ -421,19 +434,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   importCurl: (curlString: string) => {
     let method: WorkflowNode['method'] = 'GET';
-    let url = 'https://api.example.com/v1/endpoint';
+    let url = 'https://dummyjson.com/products/1';
     const headers: { key: string; value: string; enabled: boolean }[] = [];
     let body = '';
 
-    // Extract Method
     const methodMatch = curlString.match(/-X\s+([A-Z]+)/i);
     if (methodMatch) method = methodMatch[1].toUpperCase() as any;
 
-    // Extract URL
     const urlMatch = curlString.match(/curl\s+["']?([^"'\s]+)["']?/);
     if (urlMatch) url = urlMatch[1];
 
-    // Extract Headers
     const headerRegex = /-H\s+["']([^"']+)["']/g;
     let hMatch;
     while ((hMatch = headerRegex.exec(curlString)) !== null) {
@@ -447,7 +457,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       }
     }
 
-    // Extract Data
     const dataMatch = curlString.match(/--data(-raw)?\s+["']([^"']+)["']/);
     if (dataMatch) {
       body = dataMatch[2];
@@ -459,7 +468,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       id: newId,
       name: 'Imported cURL Endpoint',
       type: 'http',
-      position: { x: 340, y: 320 },
+      position: { x: 300, y: 320 },
       method,
       url,
       headers: headers.length > 0 ? headers : [{ key: 'Accept', value: 'application/json', enabled: true }],

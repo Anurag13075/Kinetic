@@ -10,18 +10,23 @@ import {
   Activity,
   Layers,
   Sparkles,
-  FileCode2,
   ChevronDown,
   Globe,
   Sliders,
+  Home,
 } from 'lucide-react';
 
 interface HeaderProps {
   onOpenCurlModal: () => void;
   onOpenEnvModal: () => void;
+  onBackToLanding?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenCurlModal, onOpenEnvModal }) => {
+export const Header: React.FC<HeaderProps> = ({
+  onOpenCurlModal,
+  onOpenEnvModal,
+  onBackToLanding,
+}) => {
   const {
     activeTab,
     setActiveTab,
@@ -40,7 +45,11 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCurlModal, onOpenEnvModal 
     <header className="h-14 border-b border-white/[0.08] bg-[#09090b]/90 backdrop-blur-md px-4 flex items-center justify-between select-none z-50 relative">
       {/* Brand & Workspace */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
+        <button
+          onClick={onBackToLanding}
+          className="flex items-center gap-2 group cursor-pointer hover:opacity-80 transition-opacity"
+          title="Return to Landing Page"
+        >
           <div className="w-7 h-7 rounded-md bg-gradient-to-br from-indigo-500 via-indigo-600 to-purple-600 flex items-center justify-center shadow-[0_0_12px_rgba(99,102,241,0.4)]">
             <Activity className="w-4 h-4 text-white" />
           </div>
@@ -50,7 +59,17 @@ export const Header: React.FC<HeaderProps> = ({ onOpenCurlModal, onOpenEnvModal 
           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800/80 text-zinc-400 border border-zinc-700/50">
             v1.0.4
           </span>
-        </div>
+        </button>
+
+        {onBackToLanding && (
+          <button
+            onClick={onBackToLanding}
+            className="flex items-center gap-1 text-[11px] font-mono text-zinc-500 hover:text-zinc-300 ml-1 transition-colors"
+          >
+            <Home className="w-3 h-3" />
+            <span>Overview</span>
+          </button>
+        )}
 
         <div className="h-4 w-px bg-zinc-800 mx-1" />
 
