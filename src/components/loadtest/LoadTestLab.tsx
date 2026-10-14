@@ -121,7 +121,7 @@ export const LoadTestLab: React.FC = () => {
           second: currentSec,
           rps: baseRps,
           p95: curP95,
-          avgLatency: randomLatency,
+          avgLatency: realSampleLatency,
           errors: errorRate,
         },
       ]);
